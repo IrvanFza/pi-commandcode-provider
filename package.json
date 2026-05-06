@@ -1,0 +1,45 @@
+{
+  "name": "pi-commandcode-provider",
+  "version": "1.0.0",
+  "description": "Command Code provider for pi — routes requests through Command Code's /alpha/generate API with all models available on your plan",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "command-code",
+    "commandcode",
+    "provider",
+    "ai",
+    "llm",
+    "deepseek",
+    "kimi",
+    "glm",
+    "qwen",
+    "minimax"
+  ],
+  "author": "Irvan Fauziansyah",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IrvanFza/pi-commandcode-provider.git"
+  },
+  "bugs": {
+    "url": "https://github.com/IrvanFza/pi-commandcode-provider/issues"
+  },
+  "homepage": "https://github.com/IrvanFza/pi-commandcode-provider#readme",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  }
+}

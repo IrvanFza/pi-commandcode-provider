@@ -1,6 +1,23 @@
 # pi-commandcode-provider
 
-A [pi](https://pi.dev) extension that adds **[Command Code](https://commandcode.ai)** as a model provider. Route LLM requests through Command Code's API with full streaming support, usage tracking, and cost calculation.
+A [pi](https://pi.dev) extension that adds **[Command Code](https://commandcode.ai)** as a model provider — giving you access to 17 models (DeepSeek, Qwen, Kimi, GLM, MiniMax, Claude, GPT) through a single $1/mo subscription.
+
+## Why This Extension?
+
+[Command Code](https://commandcode.ai) is an AI coding platform that bundles multiple LLM providers behind a single subscription. For $1/month (Go plan), you get $10 in API credits to use across 11 open-source models. The $15/month Pro plan adds Claude and GPT models.
+
+**The problem:** Command Code doesn't use a standard OpenAI- or Anthropic-compatible API. It has its own proprietary protocol:
+- Requests go to `/alpha/generate` wrapped in `{config, memory, taste, skills, params: {messages, model, ...}}`
+- Responses come back as NDJSON streams with custom event types (`text-start`, `text-delta`, `tool-call-start`, etc.)
+- Authentication uses a `Bearer` token with custom headers like `x-command-code-version`
+
+This means you can't just add a `models.json` entry pointing at Command Code's base URL — pi wouldn't know how to speak the protocol. This extension bridges that gap by implementing a custom `streamSimple` provider that:
+1. Translates pi's message format into Command Code's request schema
+2. Handles the NDJSON streaming protocol and maps events back to pi's internal format
+3. Extracts usage stats and calculates per-token costs
+4. Supports tool calls so models can use pi's full agentic toolkit
+
+The result: use Command Code models in pi as if they were any other provider. Switch models with `/model`, use non-interactive mode, everything works.
 
 ## Features
 

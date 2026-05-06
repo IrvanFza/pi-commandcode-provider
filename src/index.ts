@@ -17,20 +17,24 @@ import {
   type AssistantMessage,
   type AssistantMessageEventStream,
   type Context,
-  type Message,
   type Model,
   type SimpleStreamOptions,
-  type TextContent,
-  type Tool,
-  type ToolCall,
-  type ToolResultMessage,
   calculateCost,
   createAssistantMessageEventStream,
 } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import {
+  buildRequestBody,
+  convertMessages,
+  convertTools,
+  createStreamState,
+  mapStopReason,
+  parseNDJSON,
+  processStreamEvent,
+  resolveApiKey,
+} from "./logic.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -40,92 +44,13 @@ const CLI_VERSION_HEADER = "0.25.2";
 
 // ─── API Key Resolution ────────────────────────────────────────────────────
 
-/**
- * Resolve the Command Code API key.
- * Priority: COMMANDCODE_API_KEY env var → ~/.commandcode/auth.json
- */
 function getApiKey(): string {
-  if (process.env.COMMANDCODE_API_KEY) {
-    return process.env.COMMANDCODE_API_KEY;
-  }
-  try {
-    const auth = JSON.parse(
-      readFileSync(join(homedir(), ".commandcode", "auth.json"), "utf-8"),
-    );
-    if (auth.apiKey) return auth.apiKey;
-  } catch {
-    // ignore read errors
-  }
-  throw new Error(
-    "No Command Code API key found. Set COMMANDCODE_API_KEY or run `cmd login`.",
+  return resolveApiKey(
+    undefined,
+    process.env.COMMANDCODE_API_KEY,
+    (path) => readFileSync(path, "utf-8"),
+    homedir(),
   );
-}
-
-// ─── Message Conversion (pi → CC OpenAI-compatible format) ─────────────────
-
-function convertMessages(messages: Message[]): any[] {
-  const result: any[] = [];
-  for (const msg of messages) {
-    if (msg.role === "user") {
-      if (typeof msg.content === "string") {
-        result.push({ role: "user", content: msg.content });
-      } else {
-        const text = msg.content
-          .filter((c): c is TextContent => c.type === "text")
-          .map((c) => c.text)
-          .join("\n");
-        if (text) result.push({ role: "user", content: text });
-      }
-    } else if (msg.role === "assistant") {
-      const textParts: string[] = [];
-      const toolCalls: any[] = [];
-      for (const block of msg.content) {
-        if (block.type === "text" && block.text.trim()) {
-          textParts.push(block.text);
-        } else if (block.type === "toolCall") {
-          toolCalls.push({
-            type: "function",
-            id: block.id,
-            function: {
-              name: block.name,
-              arguments: JSON.stringify(block.arguments),
-            },
-          });
-        }
-      }
-      const assistant: any = {
-        role: "assistant",
-        content: textParts.join("\n") || null,
-      };
-      if (toolCalls.length > 0) assistant.tool_calls = toolCalls;
-      result.push(assistant);
-    } else if (msg.role === "toolResult") {
-      const content =
-        typeof msg.content === "string"
-          ? msg.content
-          : msg.content
-              .filter((c): c is TextContent => c.type === "text")
-              .map((c) => c.text)
-              .join("\n");
-      result.push({
-        role: "tool",
-        tool_call_id: (msg as ToolResultMessage).toolCallId,
-        content: content || "",
-      });
-    }
-  }
-  return result;
-}
-
-function convertTools(tools: Tool[]): any[] {
-  return tools.map((tool) => ({
-    type: "function",
-    function: {
-      name: tool.name,
-      description: tool.description || "",
-      parameters: tool.parameters || { type: "object", properties: {} },
-    },
-  }));
 }
 
 // ─── NDJSON Stream Consumer ────────────────────────────────────────────────
@@ -206,32 +131,11 @@ function streamCommandCode(
       const messages = convertMessages(context.messages);
       const tools = context.tools ? convertTools(context.tools) : [];
 
-      const body: any = {
-        config: {
-          workingDir: process.cwd(),
-          date: new Date().toISOString().split("T")[0],
-          environment: `${process.platform}-${process.arch}, Node.js ${process.version}`,
-          structure: [],
-          isGitRepo: false,
-          currentBranch: "",
-          mainBranch: "",
-          gitStatus: "",
-          recentCommits: [],
-        },
-        memory: "",
-        taste: "",
-        skills: "",
-        params: {
-          messages,
-          model: model.id,
-          max_tokens: options?.maxTokens || 16384,
-          stream: true,
-        },
-        threadId: crypto.randomUUID(),
-      };
-
-      if (tools.length > 0) body.params.tools = tools;
-      if (context.systemPrompt) body.params.system = context.systemPrompt;
+      const body = buildRequestBody(model.id, messages, {
+        tools: tools.length > 0 ? tools : undefined,
+        systemPrompt: context.systemPrompt,
+        maxTokens: options?.maxTokens,
+      });
 
       const response = await fetch(`${API_BASE}${GENERATE_ENDPOINT}`, {
         method: "POST",
@@ -262,158 +166,49 @@ function streamCommandCode(
 
       stream.push({ type: "start", partial: output });
 
-      let currentTextIndex = -1;
-      let partialToolJson = "";
-      let currentToolId = "";
-      let currentToolName = "";
+      const state = createStreamState();
 
       await consumeNDJSONStream(
         response,
         (event: any) => {
-          const t = event.type;
+          const emitted = processStreamEvent(event, state);
 
-          // ── Text events ──
-          if (t === "text-start") {
-            if (currentTextIndex < 0) {
-              output.content.push({ type: "text", text: "" });
-              currentTextIndex = output.content.length - 1;
-              stream.push({
-                type: "text_start",
-                contentIndex: currentTextIndex,
-                partial: output,
-              });
-            }
-          } else if (t === "text-delta") {
-            if (currentTextIndex < 0) {
-              output.content.push({ type: "text", text: "" });
-              currentTextIndex = output.content.length - 1;
-              stream.push({
-                type: "text_start",
-                contentIndex: currentTextIndex,
-                partial: output,
-              });
-            }
-            const delta = event.text || "";
-            const block = output.content[currentTextIndex] as any;
-            block.text += delta;
-            stream.push({
-              type: "text_delta",
-              contentIndex: currentTextIndex,
-              delta,
-              partial: output,
-            });
-          } else if (t === "text-end") {
-            if (currentTextIndex >= 0) {
-              const block = output.content[currentTextIndex] as any;
-              stream.push({
-                type: "text_end",
-                contentIndex: currentTextIndex,
-                content: block.text,
-                partial: output,
-              });
-              currentTextIndex = -1;
-            }
-
-            // ── Reasoning events (ignored) ──
-          } else if (
-            t === "reasoning-start" ||
-            t === "reasoning-delta" ||
-            t === "reasoning-end"
-          ) {
-            // skip
-
-            // ── Tool call events ──
-          } else if (
-            t === "tool-call-start" ||
-            t === "tool_call_start"
-          ) {
-            partialToolJson = "";
-            currentToolId = event.id || "";
-            currentToolName = event.name || "";
-          } else if (
-            t === "tool-call-delta" ||
-            t === "tool_call_delta"
-          ) {
-            partialToolJson += event.delta || event.arguments || "";
-          } else if (
-            t === "tool-call-end" ||
-            t === "tool_call_end"
-          ) {
-            let args: any = {};
-            try {
-              args = JSON.parse(partialToolJson);
-            } catch {
-              // use empty args on parse failure
-            }
-            const toolCall: ToolCall = {
-              type: "toolCall",
-              id: event.id || currentToolId,
-              name: event.name || currentToolName,
-              arguments: args,
-            };
-            output.content.push(toolCall);
-            const ci = output.content.length - 1;
-            stream.push({
-              type: "toolcall_start",
-              contentIndex: ci,
-              partial: output,
-            });
-            stream.push({
-              type: "toolcall_delta",
-              contentIndex: ci,
-              delta: partialToolJson,
-              partial: output,
-            });
-            stream.push({
-              type: "toolcall_end",
-              contentIndex: ci,
-              toolCall,
-              partial: output,
-            });
-            partialToolJson = "";
-
-            // ── Finish events ──
-          } else if (t === "finish-step" || t === "finish") {
-            const usage = event.usage || event.totalUsage;
-            if (usage) {
-              output.usage.input =
-                usage.inputTokens || output.usage.input;
-              output.usage.output =
-                usage.outputTokens || output.usage.output;
-              output.usage.cacheRead =
-                usage.cachedInputTokens ||
-                usage.cacheReadTokens ||
-                output.usage.cacheRead;
-              output.usage.cacheWrite =
-                usage.cacheWriteTokens || output.usage.cacheWrite;
-              output.usage.totalTokens =
-                output.usage.input +
-                output.usage.output +
-                output.usage.cacheRead +
-                output.usage.cacheWrite;
-              calculateCost(model, output.usage);
-            }
-            if (event.finishReason) {
-              const r = event.finishReason;
-              output.stopReason =
-                r === "tool_use" || r === "tool_calls"
-                  ? "toolUse"
-                  : r === "max_tokens" || r === "length"
-                    ? "length"
-                    : "stop";
+          // Push each emitted pi event to the stream with partial output
+          for (const piEvent of emitted) {
+            if (piEvent.type === "text_start") {
+              stream.push({ ...piEvent, partial: output });
+            } else if (piEvent.type === "text_delta") {
+              // Sync output content with state
+              output.content = state.content;
+              stream.push({ ...piEvent, partial: output });
+            } else if (piEvent.type === "text_end") {
+              stream.push({ ...piEvent, partial: output });
+            } else if (piEvent.type === "toolcall_start") {
+              output.content = state.content;
+              stream.push({ ...piEvent, partial: output });
+            } else if (piEvent.type === "toolcall_delta") {
+              stream.push({ ...piEvent, partial: output });
+            } else if (piEvent.type === "toolcall_end") {
+              stream.push({ ...piEvent, partial: output });
             }
           }
-          // start / start-step / provider-metadata — ignored
+
+          // Sync finish data
+          if (event.type === "finish-step" || event.type === "finish") {
+            output.usage = state.usage;
+            output.stopReason = state.stopReason as any;
+            calculateCost(model, output.usage);
+          }
         },
         options?.signal,
       );
 
       // Close text block if still open
-      if (currentTextIndex >= 0) {
+      if (state.currentTextIndex >= 0) {
         stream.push({
           type: "text_end",
-          contentIndex: currentTextIndex,
-          content: (output.content[currentTextIndex] as any).text,
+          contentIndex: state.currentTextIndex,
+          content: (output.content[state.currentTextIndex] as any).text,
           partial: output,
         });
       }

@@ -62,61 +62,27 @@ pi install /path/to/pi-commandcode-provider
 pi -e /path/to/pi-commandcode-provider
 ```
 
-## Getting Your API Key
+## API Key Setup
 
-### Step 1: Create a Command Code account
+### 1. Get your key
 
-Sign up at [commandcode.ai](https://commandcode.ai). The **Go** plan is $1/mo and includes $10 in credits — enough for thousands of requests on the cheapest models.
+Sign up at [commandcode.ai](https://commandcode.ai) → go to **Studio → API Keys** → click **Generate API key**.
 
-### Step 2: Generate an API key
+The key starts with `user_`. Copy it.
 
-Choose **one** of these methods:
+> The **Go** plan is $1/mo and includes $10 in credits — enough for thousands of requests on the cheapest models.
 
-**Option A — CLI login (easiest):**
-```bash
-npm i -g command-code@latest
-cmd login
-```
-This opens a browser to authenticate and stores the key in `~/.commandcode/auth.json`. The extension auto-detects this file — no further configuration needed.
-
-**Option B — Studio UI:**
-1. Go to [commandcode.ai/studio/api-keys](https://commandcode.ai/studio/api-keys)
-2. Click **Generate API key**
-3. Copy the key (starts with `user_`)
-
-### Step 3: Make the key available to pi
-
-The extension looks for the API key in this order:
-
-1. **`COMMANDCODE_API_KEY` environment variable**
-2. **`~/.commandcode/auth.json`** (auto-created by `cmd login`)
-
-If you used `cmd login` above, you're done — skip to [Usage](#usage).
-
-Otherwise, set the environment variable in your shell profile:
+### 2. Set the environment variable
 
 ```bash
-# Add to ~/.zshrc (macOS default) or ~/.bashrc (Linux)
+# Add to ~/.zshrc (macOS) or ~/.bashrc (Linux)
 echo 'export COMMANDCODE_API_KEY="user_paste_your_key_here"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-Verify it's set:
-```bash
-echo $COMMANDCODE_API_KEY
-# Should print: user_...
-```
+That's it. The extension reads `COMMANDCODE_API_KEY` from your environment — no CLI install needed.
 
-### (Optional) Verify your key works
-
-```bash
-# Quick auth check
-curl -s https://api.commandcode.ai/alpha/whoami \
-  -H "Authorization: Bearer $COMMANDCODE_API_KEY"
-
-# Should return your user info:
-# {"success":true,"user":{"name":"Your Name","userName":"yourname",...}}
-```
+> **Note:** If you already use the Command Code CLI and have `~/.commandcode/auth.json` on disk, the extension will pick that up automatically as a fallback.
 
 ## Usage
 

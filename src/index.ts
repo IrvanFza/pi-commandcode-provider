@@ -5,7 +5,7 @@
  * Supports all models available on your Command Code plan (open-source and premium).
  *
  * Setup:
- *   1. Set COMMANDCODE_API_KEY env var or login with `cmd login` (reads ~/.commandcode/auth.json)
+ *   1. Set COMMANDCODE_API_KEY env var
  *   2. Install: pi install git:github.com/IrvanFza/pi-commandcode-provider
  *   3. Use /model to select a Command Code model
  *
